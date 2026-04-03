@@ -127,9 +127,45 @@ struct LineCounter {
 };
 
 int main(int argc, char *argv[]) {
-    // Put last.onnx and your test video (named video.mp4) in the project root
-    const std::string video_path = "/home/ctfo/david/code/oc-sort/OC-Sort/video/04150947.mp4-new.mp4";
-const std::string onnx_path  = "/home/ctfo/david/code/oc-sort/OC-Sort/model/yolo11n_640.onnx";
+    // Default paths
+    const std::string default_video_path = "/home/ctfo/david/code/oc-sort/yolo11n-onnx-oc-sort/video/04150947.mp4-new.mp4";
+    const std::string default_onnx_path  = "/home/ctfo/david/code/oc-sort/yolo11n-onnx-oc-sort/model/yolo11n_640.onnx";
+
+    std::string video_path = default_video_path;
+    std::string onnx_path  = default_onnx_path;
+
+    // Parse command-line arguments
+    int pos_idx = 0;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "--video" || arg == "-v") && i + 1 < argc) {
+            video_path = argv[++i];
+        } else if ((arg == "--model" || arg == "-m") && i + 1 < argc) {
+            onnx_path = argv[++i];
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: " << argv[0] << " [video_path] [model_path] [options]\n"
+                      << "Options:\n"
+                      << "  Positional args:\n"
+                      << "    arg1            Video file path (default: " << default_video_path << ")\n"
+                      << "    arg2            ONNX model path (default: " << default_onnx_path << ")\n"
+                      << "  Named args:\n"
+                      << "    --video, -v <path>   Video file path\n"
+                      << "    --model, -m <path>   ONNX model path\n"
+                      << "    --help, -h           Show this help message\n";
+            return 0;
+        } else {
+            // Positional arguments: arg1 = video, arg2 = model
+            if (pos_idx == 0) {
+                video_path = arg;
+            } else if (pos_idx == 1) {
+                onnx_path = arg;
+            }
+            ++pos_idx;
+        }
+    }
+
+    std::cout << "Using video: " << video_path << "\n";
+    std::cout << "Using model: " << onnx_path << "\n";
 
     // OC-SORT tracker initialization
     ocsort::OCSort tracker = ocsort::OCSort(
@@ -191,6 +227,8 @@ const std::string onnx_path  = "/home/ctfo/david/code/oc-sort/OC-Sort/model/yolo
     cv::Mat frame;
     int frame_idx = 0;
     double OverAll_Time = 0;
+    int stat_frames = 0;
+    double stat_time = 0;
 
     while (true) {
         if (!cap.read(frame)) {
@@ -281,9 +319,18 @@ const std::string onnx_path  = "/home/ctfo/david/code/oc-sort/OC-Sort/model/yolo
         std::vector<Eigen::RowVectorXf> res = tracker.update(dets);
         auto T_end = high_resolution_clock::now();
         duration<double, std::milli> ms_double = T_end - T_start;
-        std::cout << "Frame " << frame_idx << " | Tracks: " << res.size()
-                  << " | OC-SORT time: " << ms_double.count() << " ms" << std::endl;
         OverAll_Time += ms_double.count();
+        stat_frames += 1;
+        stat_time += ms_double.count();
+        if (stat_frames >= 30) {
+            double avg_ms = stat_time / stat_frames;
+            int avg_fps = (avg_ms > 0.0) ? (int)(1000.0 / avg_ms) : 0;
+            std::cout << "=== [Stat] Frames " << frame_idx - stat_frames + 1 << "-" << frame_idx
+                      << " | Tracks: " << res.size()
+                      << " | Avg OC-SORT: " << avg_ms << " ms | Avg FPS: " << avg_fps << " ===" << std::endl;
+            stat_frames = 0;
+            stat_time = 0;
+        }
 
         for (const auto& j : res) {
             if (j.size() < 5) continue;
