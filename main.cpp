@@ -229,8 +229,11 @@ int main(int argc, char *argv[]) {
     double OverAll_Time = 0;
     int stat_frames = 0;
     double stat_time = 0;
+    double stat_total_time = 0;
+    double stat_infer_time = 0;
 
     while (true) {
+        auto frame_start = high_resolution_clock::now();
         if (!cap.read(frame)) {
             std::cout << "End of stream." << std::endl;
             break;
@@ -243,9 +246,13 @@ int main(int argc, char *argv[]) {
         if ((frame_idx % DET_EVERY_N) == 0) {
             preprocessToNCHW_fast(frame, chw);
 
+            auto infer_start = high_resolution_clock::now();
             auto outputs = session.Run(Ort::RunOptions{nullptr},
                                        input_names, ort_inputs.data(), (size_t)ort_inputs.size(),
                                        output_names, 1);
+            auto infer_end = high_resolution_clock::now();
+            duration<double, std::milli> infer_ms = infer_end - infer_start;
+            stat_infer_time += infer_ms.count();
 
             // Parse YOLO output: [1, 84, 8400] = [batch, (4+80), num_predictions]
             auto* out = outputs[0].GetTensorData<float>();
@@ -319,17 +326,26 @@ int main(int argc, char *argv[]) {
         std::vector<Eigen::RowVectorXf> res = tracker.update(dets);
         auto T_end = high_resolution_clock::now();
         duration<double, std::milli> ms_double = T_end - T_start;
+        auto frame_end = high_resolution_clock::now();
+        duration<double, std::milli> frame_ms = frame_end - frame_start;
         OverAll_Time += ms_double.count();
         stat_frames += 1;
         stat_time += ms_double.count();
+        stat_total_time += frame_ms.count();
         if (stat_frames >= 30) {
             double avg_ms = stat_time / stat_frames;
-            int avg_fps = (avg_ms > 0.0) ? (int)(1000.0 / avg_ms) : 0;
+            double avg_total_ms = stat_total_time / stat_frames;
+            double avg_infer_ms = stat_infer_time / stat_frames;
             std::cout << "=== [Stat] Frames " << frame_idx - stat_frames + 1 << "-" << frame_idx
                       << " | Tracks: " << res.size()
-                      << " | Avg OC-SORT: " << avg_ms << " ms | Avg FPS: " << avg_fps << " ===" << std::endl;
+                      << " | Avg YOLO: " << avg_infer_ms << " ms"
+                      << " | Avg Tracker: " << avg_ms << " ms"
+                      << " | Avg Total: " << avg_total_ms << " ms"
+                      << " | FPS: " << (avg_total_ms > 0 ? (int)(1000.0 / avg_total_ms) : 0) << " ===" << std::endl;
             stat_frames = 0;
             stat_time = 0;
+            stat_total_time = 0;
+            stat_infer_time = 0;
         }
 
         for (const auto& j : res) {
